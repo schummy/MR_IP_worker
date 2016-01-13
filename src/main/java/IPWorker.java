@@ -1,7 +1,7 @@
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
@@ -9,6 +9,8 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,22 +22,71 @@ import java.util.regex.Pattern;
 /**
  * Created by user on 1/12/16.
  */
-public class IPWorker {
-    private static Logger logger;
-    private static final String outputSeparator = "\t";
-    public static void setLogger(Logger logger) {
-        IPWorker.logger = logger;
+public class IPWorker extends Configured implements Tool {
+    private Logger logger;
+    private String outputSeparator = ",";
+    public void setLogger(Logger logger) {
+        this.logger = logger;
+    }
+
+    @Override
+    public int run(String[] strings) throws Exception {
+        setLogger(LoggerFactory.getLogger(IPWorker.class));
+
+        Configuration conf = getConf();
+
+        Job job = Job.getInstance(conf, "IP parser");
+        setTextoutputformatSeparator(job, outputSeparator);
+
+        job.setNumReduceTasks(1);
+
+        job.setJarByClass(IPMapper.class);
+        job.setMapperClass(IPMapper.class);
+        job.setCombinerClass(IPCombiner.class);
+        job.setReducerClass(IPReducer.class);
+
+        // map output types
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(SumCountAverage.class);
+
+        // reducer output types
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(SumCountAverage.class);
+
+        FileInputFormat.addInputPath(job, new Path(strings[0]));
+        FileOutputFormat.setOutputPath(job, new Path(strings[1] +
+                DateTimeFormatter.ofPattern("_yyyyMMddHHmmss").format(LocalDateTime.now()).toString()));
+
+        return job.waitForCompletion(true)? 0 : 1;
     }
 
 
-    public static class IPMapper extends Mapper<LongWritable, Text, Text, SumCount>{
+    public static void main(String[] args) throws Exception {
+        int res = ToolRunner.run(new Configuration(), new IPWorker(), args);
+        System.exit(res);
+
+    }
+
+    protected static void setTextoutputformatSeparator(final Job job, final String separator){
+        final Configuration conf = job.getConfiguration(); //ensure accurate config ref
+
+        conf.set("mapred.textoutputformat.separator", separator); //Prior to Hadoop 2 (YARN)
+        conf.set("mapreduce.textoutputformat.separator", separator);  //Hadoop v2+ (YARN)
+        conf.set("mapreduce.output.textoutputformat.separator", separator);
+        conf.set("mapreduce.output.key.field.separator", separator);
+        conf.set("mapred.textoutputformat.separatorText", separator); // ?
+    }
+
+    public static class IPMapper extends Mapper<LongWritable, Text, Text, SumCountAverage>{
 
         private Text ip = new Text();
-        private SumCount zeroSize = new SumCount(0, 1);
-        private SumCount sumCount = new SumCount(0, 1);
+        private SumCountAverage zeroSize = new SumCountAverage(0, 1);
+        private SumCountAverage sumCount = new SumCountAverage(0, 1);
+        private Logger logger;
 
 
         public static final int NUM_FIELDS = 9;
+
         @Override
         protected void map(LongWritable key, Text value, Context context
         ) throws IOException, InterruptedException {
@@ -58,24 +109,28 @@ public class IPWorker {
             } else {
                 context.write(ip, zeroSize);
             }
-            /* logger.debug("IP Address: {}", matcher.group(1));
+
+            //context.write(ip, intWritable);
+
+            /*
+            logger.debug("IP Address: {}", matcher.group(1));
             logger.debug("Date&Time: {}", matcher.group(4));
             logger.debug("Request: {}", matcher.group(5));
             logger.debug("Response: {}", matcher.group(6));
             logger.debug("Bytes Sent: {}", matcher.group(7));
             if (!matcher.group(8).equals("-"))
-                logger.debug("Referer: {}", matcher.group(8));*/
-            //logger.debug("IP Address: {} Browser: {}", matcher.group(1), matcher.group(9));
+                logger.debug("Referer: {}", matcher.group(8));
+                */
         }
     }
-    public static class IPCombiner extends Reducer<Text, SumCount, Text, SumCount> {
-        private static SumCount result = new SumCount();
+    public static class IPCombiner extends Reducer<Text, SumCountAverage, Text, SumCountAverage> {
+        private static SumCountAverage result = new SumCountAverage();
         @Override
-        protected void reduce(Text key, Iterable<SumCount> values, Context context) throws IOException, InterruptedException {
+        protected void reduce(Text key, Iterable<SumCountAverage> values, Context context) throws IOException, InterruptedException {
            // logger.info("Combiner reduce started");
             int sum = 0;
             int count = 0;
-            for (SumCount val:values) {
+            for (SumCountAverage val:values) {
                 sum += val.getSum();
                 count += val.getCount();
             }
@@ -85,15 +140,15 @@ public class IPWorker {
             context.write(key, result);
         }
     }
-    public static class IPReducer extends Reducer<Text, SumCount, Text, SumAvg> {
-        private static SumAvg result = new SumAvg();
+    public static class IPReducer extends Reducer<Text, SumCountAverage, Text, SumCountAverage> {
+        private static SumCountAverage result = new SumCountAverage();
         @Override
-        protected void reduce(Text key, Iterable<SumCount> values, Context context) throws IOException, InterruptedException {
+        protected void reduce(Text key, Iterable<SumCountAverage> values, Context context) throws IOException, InterruptedException {
            //  logger.info("Reducer reduce started");
 
             int sum = 0;
             int count = 0;
-            for (SumCount val:values) {
+            for (SumCountAverage val:values) {
                 sum     += val.getSum();
                 count   += val.getCount();
             }
@@ -104,42 +159,5 @@ public class IPWorker {
         }
     }
 
-    public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException {
-        setLogger(LoggerFactory.getLogger(IPMapper.class));
 
-        Configuration conf = new Configuration();
-
-        Job job = Job.getInstance(conf, "IP parser");
-        setTextoutputformatSeparator(job, outputSeparator);
-
-        job.setNumReduceTasks(0);
-
-        job.setJarByClass(IPMapper.class);
-        job.setMapperClass(IPMapper.class);
-        job.setCombinerClass(IPCombiner.class);
-        job.setReducerClass(IPReducer.class);
-
-        // map output types
-        job.setMapOutputKeyClass(Text.class);
-        job.setMapOutputValueClass(SumAvg.class);
-
-        // reducer output types
-        job.setOutputKeyClass(Text.class);
-        job.setOutputValueClass(SumAvg.class);
-
-        FileInputFormat.addInputPath(job, new Path(args[0]));
-        FileOutputFormat.setOutputPath(job, new Path(args[1] +
-                DateTimeFormatter.ofPattern("_yyyyMMddHHmmss").format(LocalDateTime.now()).toString()));
-        System.exit(job.waitForCompletion(true)? 0 : 1);
-    }
-
-    protected static void setTextoutputformatSeparator(final Job job, final String separator){
-        final Configuration conf = job.getConfiguration(); //ensure accurate config ref
-
-        conf.set("mapred.textoutputformat.separator", separator); //Prior to Hadoop 2 (YARN)
-        conf.set("mapreduce.textoutputformat.separator", separator);  //Hadoop v2+ (YARN)
-        conf.set("mapreduce.output.textoutputformat.separator", separator);
-        conf.set("mapreduce.output.key.field.separator", separator);
-        conf.set("mapred.textoutputformat.separatorText", separator); // ?
-    }
 }
