@@ -3,12 +3,14 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.slf4j.Logger;
@@ -35,8 +37,10 @@ public class IPWorker extends Configured implements Tool {
 
         Configuration conf = getConf();
 
+
         Job job = Job.getInstance(conf, "IP parser");
         setTextoutputformatSeparator(job, outputSeparator);
+        setCompressionProperties(job);
 
         job.setNumReduceTasks(1);
 
@@ -75,6 +79,18 @@ public class IPWorker extends Configured implements Tool {
         conf.set("mapreduce.output.textoutputformat.separator", separator);
         conf.set("mapreduce.output.key.field.separator", separator);
         conf.set("mapred.textoutputformat.separatorText", separator); // ?
+
+
+    }
+    protected static void setCompressionProperties(final Job job) {
+        final Configuration conf = job.getConfiguration(); //ensure accurate config ref
+
+        SequenceFileOutputFormat.setOutputCompressionType(job, SequenceFile.CompressionType.BLOCK);
+        SequenceFileOutputFormat.setCompressOutput(job, true);
+
+        conf.set("mapred.output.compression.codec", "org.apache.hadoop.io.compress.SnappyCodec");
+        conf.set("mapreduce.output.fileoutputformat.compress.codec", "org.apache.hadoop.io.compress.SnappyCodec");
+        conf.set("io.compression.codecs", "org.apache.hadoop.io.compress.SnappyCodec");
     }
 
     public static class IPMapper extends Mapper<LongWritable, Text, Text, SumCountAverage>{
