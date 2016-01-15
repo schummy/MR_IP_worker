@@ -5,6 +5,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Counter;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
@@ -17,8 +18,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-//import java.time.LocalDateTime;
-//import java.time.format.DateTimeFormatter;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 /**
@@ -34,13 +35,12 @@ public class IPWorker extends Configured implements Tool {
     @Override
     public int run(String[] strings) throws Exception {
         setLogger(LoggerFactory.getLogger(IPWorker.class));
-
         Configuration conf = getConf();
 
 
         Job job = Job.getInstance(conf, "IP parser");
         setTextoutputformatSeparator(job, outputSeparator);
-        setCompressionProperties(job);
+        //setCompressionProperties(job);
 
         job.setNumReduceTasks(1);
 
@@ -59,9 +59,21 @@ public class IPWorker extends Configured implements Tool {
 
         FileInputFormat.addInputPath(job, new Path(strings[0]));
         FileOutputFormat.setOutputPath(job, new Path(strings[1] +
-                //DateTimeFormatter.ofPattern("_yyyyMMddHHmmss").format(LocalDateTime.now()).toString()));
-                System.currentTimeMillis() ) );
-        return job.waitForCompletion(true)? 0 : 1;
+                DateTimeFormatter.ofPattern("_yyyyMMddHHmmss").format(LocalDateTime.now()).toString()));
+
+        int result = job.waitForCompletion(true)? 0 : 1;
+        long mozilla = job.getCounters().findCounter("Browser", "Mozilla").getValue();
+        long ie = job.getCounters().findCounter("Browser", "IE").getValue();
+        long other = job.getCounters().findCounter("Browser", "Other").getValue();
+
+        //System.out.println("Mozilla:" + mozilla + " IE:" + ie + " Other:" + other);
+
+        for(Counter cnt: job.getCounters().getGroup("Browser"))
+        {
+            System.out.println(cnt.getName() + ":" + cnt.getValue());
+        }
+
+        return result;
     }
 
 
@@ -106,9 +118,11 @@ public class IPWorker extends Configured implements Tool {
         @Override
         protected void map(LongWritable key, Text value, Context context
         ) throws IOException, InterruptedException {
-          //  logger.info("map started");
+            logger = LoggerFactory.getLogger(IPMapper.class);
 
-            String logEntryPattern = "^(ip[\\d]+) (\\S+) (\\S+) \\[([\\w:/]+\\s[+\\-]\\d{4})\\] \"(.+?)\" (\\d{3}) (\\S+) \"([^\"]*)\" \"([^\"]+)\"";            String[] tokens;
+            //logger.info("map started");
+
+            String logEntryPattern = "^(ip[\\d]+) (\\S+) (\\S+) \\[([\\w:/]+\\s[+\\-]\\d{4})\\] \"(.+?)\" (\\d{3}) (\\S+) \"([^\"]*)\" \"([^\"]+)\"";
 
             Pattern p = Pattern.compile(logEntryPattern);
             Matcher matcher = p.matcher(value.toString());
@@ -126,6 +140,7 @@ public class IPWorker extends Configured implements Tool {
                 context.write(ip, zeroSize);
             }
 
+
             //context.write(ip, intWritable);
 
             /*
@@ -136,7 +151,20 @@ public class IPWorker extends Configured implements Tool {
             logger.debug("Bytes Sent: {}", matcher.group(7));
             if (!matcher.group(8).equals("-"))
                 logger.debug("Referer: {}", matcher.group(8));
+            logger.debug("Agent: {}", matcher.group(9));
                 */
+
+            String agentPattern = "^([^/+\\(]+)[/+\\(](.*)";
+            Pattern p2 = Pattern.compile(agentPattern);
+            Matcher agentMatcher = p2.matcher(matcher.group(9));
+            if (!agentMatcher.matches()) {
+                //logger.info("Agent: {}", matcher.group(9));
+                context.getCounter("Browser", "Other").increment(1);
+            }
+            else
+                context.getCounter("Browser", agentMatcher.group(1)).increment(1);
+          //  context.getCounter("Browser", "IE").increment(2);
+
         }
     }
     public static class IPCombiner extends Reducer<Text, SumCountAverage, Text, SumCountAverage> {
