@@ -3,8 +3,8 @@
  */
 
 import java.io.IOException;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+//import java.time.LocalDateTime;
+//import java.time.format.DateTimeFormatter;
 import java.util.StringTokenizer;
 
 import org.apache.hadoop.conf.Configuration;
@@ -77,7 +77,8 @@ public class WordCounter {
 
         FileInputFormat.addInputPath(job, new Path(args[0]));
         FileOutputFormat.setOutputPath(job, new Path(args[1] +
-                DateTimeFormatter.ofPattern("_yyyyMMddHHmmss").format(LocalDateTime.now()).toString() ) );
+                //DateTimeFormatter.ofPattern("_yyyyMMddHHmmss").format(LocalDateTime.now()).toString() )
+                System.currentTimeMillis() ) );
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
 }
